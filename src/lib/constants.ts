@@ -1,3 +1,28 @@
+// Subject colour palette — inline styles so Tailwind purge doesn't strip them
+export interface SubjectColor {
+  bg: string;     // card / pill background
+  text: string;   // primary text
+  border: string; // card border
+  accent: string; // solid dot / badge
+  muted: string;  // secondary text
+}
+
+export const SUBJECT_COLORS: Record<string, SubjectColor> = {
+  Maths:     { bg: '#E6F1FB', text: '#0C447C', border: '#B5D4F4', accent: '#378ADD', muted: '#185FA5' },
+  Chemistry: { bg: '#FAEEDA', text: '#633806', border: '#F5C97A', accent: '#EF9F27', muted: '#854F0B' },
+  Physics:   { bg: '#EAF3DE', text: '#27500A', border: '#A8D9AC', accent: '#63B96A', muted: '#3B6D11' },
+  Biology:   { bg: '#EEEDFE', text: '#3C3489', border: '#CECBF6', accent: '#7F77DD', muted: '#534AB7' },
+  English:   { bg: '#E0F5F3', text: '#0C4A45', border: '#9DD4CF', accent: '#14B8A6', muted: '#0F766E' },
+};
+
+// Fallback for unknown/custom subjects
+export const DEFAULT_SUBJECT_COLOR: SubjectColor =
+  { bg: '#F1EFE8', text: '#2C2C2A', border: '#D3D1C7', accent: '#9B9890', muted: '#5F5E5A' };
+
+export function subjectColor(subj: string): SubjectColor {
+  return SUBJECT_COLORS[subj] ?? DEFAULT_SUBJECT_COLOR;
+}
+
 // Tutor subject → default teacher + times
 export const TUTOR_MAP: Record<string, { teacher: string; uk: string; ng: string }> = {
   'Maths':     { teacher: 'Mr. George Ose',         uk: '7:00–8:00pm', ng: '8:00–9:00pm' },

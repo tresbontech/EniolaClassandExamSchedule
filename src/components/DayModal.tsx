@@ -6,6 +6,7 @@ import {
   UK_TIME_SLOTS, NG_TIME_SLOTS,
   EXAM_BOARDS,
   SCHOOL_MAP, SCHOOL_SUBJECTS, SCHOOL_TIMES,
+  subjectColor,
 } from '@/lib/constants';
 
 const MF = ['', 'January', 'February', 'March', 'April', 'May', 'June',
@@ -233,14 +234,16 @@ export default function DayModal({ day, onSave, onClose }: Props) {
             <div className="space-y-3">
               {edited.tutor.map((t, i) => {
                 const key = `tutor-${i}`;
+                const c = subjectColor(t.subj);
                 return (
-                  <div key={i} className={`rounded-lg border p-3 space-y-2.5 ${
-                    t.moved ? 'bg-moved-bg border-moved-border' : 'bg-kept-bg border-kept-border'}`}>
+                  <div key={i}
+                    style={{ background: c.bg, borderColor: c.border, borderLeftColor: c.accent, borderLeftWidth: '3px' }}
+                    className="rounded-lg border p-3 space-y-2.5">
 
                     <div className="flex items-center justify-between">
-                      <span className={`text-[10px] font-bold uppercase tracking-wider ${
-                        t.moved ? 'text-moved-muted' : 'text-kept-muted'}`}>
-                        {t.moved ? '▶ Reshuffled' : '✓ Regular'}
+                      <span style={{ color: c.muted }} className="text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5">
+                        <span style={{ background: c.accent }} className="w-2 h-2 rounded-full inline-block" />
+                        {t.subj} · {t.moved ? '▶ Reshuffled' : '✓ Regular'}
                       </span>
                       <button onClick={() => delTutor(i)}
                         className="text-[10px] text-red-400 hover:text-red-600 font-medium">Remove</button>
@@ -299,7 +302,8 @@ export default function DayModal({ day, onSave, onClose }: Props) {
 
                     <div className="flex items-center justify-between pt-1">
                       <a href={tutorGcal(t)} target="_blank" rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-[10px] text-gray-400 hover:text-gray-600 hover:underline">
+                        style={{ color: c.muted }}
+                        className="inline-flex items-center gap-1 text-[10px] hover:underline opacity-80">
                         <CalIcon />Add to Google Calendar
                       </a>
                       <UpdateBtn onClick={() => update(key)} saved={savedKeys.has(key)} />
