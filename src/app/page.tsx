@@ -1,12 +1,11 @@
 'use client';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Day, Week } from '@/lib/types';
 import { initialWeeks } from '@/lib/data';
 import { generateICS } from '@/lib/ics';
+import { supabase, SCHEDULE_ID } from '@/lib/supabase';
 import DayCard from '@/components/DayCard';
 import DayModal from '@/components/DayModal';
-
-const STORAGE_KEY = 'eniola-gcse-2026';
 
 function CalendarIcon() {
   return (
@@ -27,41 +26,92 @@ function LegendDot({ color, label }: { color: string; label: string }) {
 
 export default function HomePage() {
   const [weeks, setWeeks] = useState<Week[]>(initialWeeks);
-  const [mounted, setMounted] = useState(false);
   const [selectedDay, setSelectedDay] = useState<Day | null>(null);
   const [toast, setToast] = useState('');
+  const [synced, setSynced] = useState(false);
 
-  // Load from localStorage after mount to avoid SSR mismatch
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) setWeeks(JSON.parse(saved));
-    } catch { /* ignore */ }
-    setMounted(true);
-  }, []);
+  // Ref so callbacks always see the latest weeks without stale closure
+  const weeksRef = useRef<Week[]>(initialWeeks);
+  const syncWeeks = (next: Week[]) => {
+    setWeeks(next);
+    weeksRef.current = next;
+  };
 
-  // Persist to localStorage on every change after mount
   useEffect(() => {
-    if (mounted) {
-      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(weeks)); } catch { /* ignore */ }
+    // ── 1. Load current schedule from Supabase ──────────────
+    async function load() {
+      const { data, error } = await supabase
+        .from('schedule')
+        .select('data')
+        .eq('id', SCHEDULE_ID)
+        .maybeSingle();
+
+      if (error) {
+        console.error('Supabase load error:', error.message);
+        setSynced(true); // still allow local use
+        return;
+      }
+
+      if (data?.data && Array.isArray(data.data) && (data.data as Week[]).length > 0) {
+        syncWeeks(data.data as Week[]);
+      } else {
+        // First ever load — seed the database with the default schedule
+        await supabase
+          .from('schedule')
+          .upsert({ id: SCHEDULE_ID, data: initialWeeks });
+      }
+      setSynced(true);
     }
-  }, [weeks, mounted]);
+
+    load();
+
+    // ── 2. Real-time subscription — any UPDATE on this row ──
+    const channel = supabase
+      .channel('schedule-sync')
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'schedule', filter: `id=eq.${SCHEDULE_ID}` },
+        (payload) => {
+          syncWeeks((payload.new as { data: Week[] }).data);
+        }
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, []);
 
   const showToast = (msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(''), 3500);
   };
 
-  const handleSave = useCallback((updated: Day) => {
-    setWeeks((prev) =>
-      prev.map((wk) => ({
-        ...wk,
-        days: wk.days.map((d) => (d.id === updated.id ? updated : d)),
-      }))
-    );
-    // Modal stays open — each entry has its own Update button
-    showToast('Saved');
+  // ── Save a single day's changes to Supabase ───────────────
+  const handleSave = useCallback(async (updated: Day) => {
+    const newWeeks = weeksRef.current.map((wk) => ({
+      ...wk,
+      days: wk.days.map((d) => (d.id === updated.id ? updated : d)),
+    }));
+
+    syncWeeks(newWeeks); // optimistic local update
+
+    const { error } = await supabase
+      .from('schedule')
+      .update({ data: newWeeks })
+      .eq('id', SCHEDULE_ID);
+
+    if (error) {
+      showToast('Save failed — check your connection');
+    } else {
+      showToast('Saved');
+    }
   }, []);
+
+  const handleReset = async () => {
+    if (!window.confirm('Reset all changes back to the original schedule for everyone?')) return;
+    syncWeeks(initialWeeks);
+    await supabase.from('schedule').update({ data: initialWeeks }).eq('id', SCHEDULE_ID);
+    showToast('Schedule reset for all viewers');
+  };
 
   const handleAddToCalendar = () => {
     const ics = generateICS(weeks);
@@ -77,14 +127,6 @@ export default function HomePage() {
     showToast('📅 Calendar file downloaded — open it to import into Google / Apple / Outlook Calendar');
   };
 
-  const handleReset = () => {
-    if (window.confirm('Reset all changes back to the original schedule?')) {
-      setWeeks(initialWeeks);
-      showToast('Schedule reset to original');
-    }
-  };
-
-  // Find the current selected day from latest weeks state (so modal sees fresh data)
   const liveSelectedDay = selectedDay
     ? weeks.flatMap((w) => w.days).find((d) => d.id === selectedDay.id) ?? null
     : null;
@@ -96,24 +138,26 @@ export default function HomePage() {
         <div className="max-w-screen-xl mx-auto px-4 sm:px-6">
           <div className="flex items-center justify-between gap-4 py-3 flex-wrap">
             <div>
-              <h1 className="text-base font-semibold text-gray-900 leading-tight">
-                Eniola — GCSE Exam & Tutor Calendar 2026
-              </h1>
+              <div className="flex items-center gap-2">
+                <h1 className="text-base font-semibold text-gray-900 leading-tight">
+                  Eniola — GCSE Exam & Tutor Calendar 2026
+                </h1>
+                {/* Live indicator */}
+                <span className={`inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full transition-all ${
+                  synced ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-400'
+                }`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${synced ? 'bg-green-500 animate-pulse' : 'bg-gray-300'}`} />
+                  {synced ? 'Live' : 'Connecting…'}
+                </span>
+              </div>
               <p className="text-[11px] text-gray-400 mt-0.5">
-                Tresbon Tech Academy · Tap any day to view or edit
+                Tresbon Tech Academy · Updates sync to all viewers instantly
               </p>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
-              <button onClick={() => window.print()} className="btn-ghost">
-                Print / PDF
-              </button>
-              <button onClick={handleReset} className="btn-ghost">
-                Reset
-              </button>
-              <button
-                onClick={handleAddToCalendar}
-                className="btn-primary flex items-center gap-1.5"
-              >
+              <button onClick={() => window.print()} className="btn-ghost">Print / PDF</button>
+              <button onClick={handleReset} className="btn-ghost">Reset</button>
+              <button onClick={handleAddToCalendar} className="btn-primary flex items-center gap-1.5">
                 <CalendarIcon />
                 Add to Calendar
               </button>
@@ -136,19 +180,12 @@ export default function HomePage() {
           <section key={wk.id}>
             <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3 pb-2 border-b border-gray-200">
               {wk.label}{' '}
-              <span className="font-normal normal-case tracking-normal text-gray-400">
-                — {wk.sub}
-              </span>
+              <span className="font-normal normal-case tracking-normal text-gray-400">— {wk.sub}</span>
             </div>
             <div className="overflow-x-auto -mx-1">
               <div className="grid grid-cols-7 gap-1.5 min-w-[560px] px-1">
                 {wk.days.map((day) => (
-                  <DayCard
-                    key={day.id}
-                    day={day}
-                    isHT={wk.isHT}
-                    onClick={() => setSelectedDay(day)}
-                  />
+                  <DayCard key={day.id} day={day} isHT={wk.isHT} onClick={() => setSelectedDay(day)} />
                 ))}
               </div>
             </div>
@@ -170,10 +207,8 @@ export default function HomePage() {
       )}
 
       {/* ── TOAST ──────────────────────────────────────────── */}
-      <div
-        className={`fixed bottom-5 left-1/2 -translate-x-1/2 z-50 transition-all duration-300 no-print
-          ${toast ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2 pointer-events-none'}`}
-      >
+      <div className={`fixed bottom-5 left-1/2 -translate-x-1/2 z-50 transition-all duration-300 no-print
+        ${toast ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2 pointer-events-none'}`}>
         <div className="bg-gray-900 text-white text-xs px-4 py-2.5 rounded-lg shadow-lg max-w-sm text-center">
           {toast}
         </div>
