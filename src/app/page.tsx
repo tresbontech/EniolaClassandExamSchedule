@@ -59,8 +59,8 @@ export default function HomePage() {
         days: wk.days.map((d) => (d.id === updated.id ? updated : d)),
       }))
     );
-    setSelectedDay(null);
-    showToast('Changes saved');
+    // Modal stays open — each entry has its own Update button
+    showToast('Saved');
   }, []);
 
   const handleAddToCalendar = () => {

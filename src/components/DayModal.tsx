@@ -25,12 +25,10 @@ function gcalLink(summary: string, start: string, end: string, details = ''): st
 
 function icsDatetime(year: number, month: number, day: number, hour: number, min: number): string {
   const pad = (n: number) => n.toString().padStart(2, '0');
-  // BST → UTC: subtract 1
-  const h = hour - 1;
-  return `${year}${pad(month)}${pad(day)}T${pad(h)}${pad(min)}00Z`;
+  return `${year}${pad(month)}${pad(day)}T${pad(hour - 1)}${pad(min)}00Z`; // BST → UTC
 }
 
-function parseHourMin(timeStr: string): { sh: number; sm: number; eh: number; em: number } | null {
+function parseHourMin(timeStr: string) {
   const m = timeStr.match(/(\d+):(\d+)[–\-](\d+):(\d+)(am|pm)/i);
   if (!m) return null;
   let sh = parseInt(m[1]), sm = parseInt(m[2]);
@@ -42,6 +40,21 @@ function parseHourMin(timeStr: string): { sh: number; sm: number; eh: number; em
   return { sh, sm, eh, em };
 }
 
+function UpdateBtn({ onClick, saved }: { onClick: () => void; saved: boolean }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`text-[11px] font-semibold px-3 py-1 rounded-md transition-all duration-200 border ${
+        saved
+          ? 'bg-green-50 text-green-700 border-green-200'
+          : 'bg-gray-900 text-white border-gray-900 hover:bg-gray-700'
+      }`}
+    >
+      {saved ? '✓ Updated' : 'Update'}
+    </button>
+  );
+}
+
 export default function DayModal({ day, onSave, onClose }: Props) {
   const [edited, setEdited] = useState<Day>({
     ...day,
@@ -50,48 +63,79 @@ export default function DayModal({ day, onSave, onClose }: Props) {
     sch: day.sch.map((s) => ({ ...s })),
   });
 
+  // Tracks which keys were recently updated (for ✓ feedback)
+  const [savedKeys, setSavedKeys] = useState<Set<string>>(new Set());
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  // Exam helpers
-  const setExam = (exam: Exam | null) => setEdited((p) => ({ ...p, exam }));
+  const markSaved = (key: string) => {
+    setSavedKeys((prev) => new Set([...prev, key]));
+    setTimeout(() => {
+      setSavedKeys((prev) => { const n = new Set(prev); n.delete(key); return n; });
+    }, 2000);
+  };
+
+  // Save current edited state and mark a key as saved
+  const update = (key: string, snapshot?: Day) => {
+    onSave(snapshot ?? edited);
+    markSaved(key);
+  };
+
+  // ── Exam helpers ────────────────────────────────────
+  const setExam = (exam: Exam | null) => {
+    const next = { ...edited, exam };
+    setEdited(next);
+    onSave(next); // removing/adding exam saves immediately
+  };
   const updExam = (field: keyof Exam, val: string) =>
     setEdited((p) => p.exam ? { ...p, exam: { ...p.exam, [field]: val } } : p);
 
-  // Tutor helpers
+  // ── Tutor helpers ───────────────────────────────────
   const updTutor = (i: number, field: keyof TutorSession, val: string | boolean) =>
     setEdited((p) => ({ ...p, tutor: p.tutor.map((t, j) => j === i ? { ...t, [field]: val } : t) }));
   const addTutor = () => setEdited((p) => ({ ...p, tutor: [...p.tutor, blankTutor()] }));
-  const delTutor = (i: number) => setEdited((p) => ({ ...p, tutor: p.tutor.filter((_, j) => j !== i) }));
+  const delTutor = (i: number) => {
+    const next = { ...edited, tutor: edited.tutor.filter((_, j) => j !== i) };
+    setEdited(next);
+    onSave(next); // delete saves immediately
+  };
 
-  // School helpers
+  // ── School helpers ──────────────────────────────────
   const updSch = (i: number, field: keyof SchoolSession, val: string) =>
     setEdited((p) => ({ ...p, sch: p.sch.map((s, j) => j === i ? { ...s, [field]: val } : s) }));
   const addSch = () => setEdited((p) => ({ ...p, sch: [...p.sch, blankSchool()] }));
-  const delSch = (i: number) => setEdited((p) => ({ ...p, sch: p.sch.filter((_, j) => j !== i) }));
+  const delSch = (i: number) => {
+    const next = { ...edited, sch: edited.sch.filter((_, j) => j !== i) };
+    setEdited(next);
+    onSave(next); // delete saves immediately
+  };
 
-  // Google Calendar links for exams
+  // ── Google Calendar links ───────────────────────────
   function examGcal(exam: Exam): string {
-    const year = 2026;
     let sh = 8, sm = 0, eh = 11, em = 0;
-    if (exam.time.includes('PM')) { sh = 12; sm = 0; eh = 14; em = 30; }
-    if (exam.time.includes('AM + PM')) { sh = 8; sm = 0; eh = 14; em = 30; }
-    const start = icsDatetime(year, day.m, day.d, sh, sm);
-    const end = icsDatetime(year, day.m, day.d, eh, em);
-    return gcalLink(`Exam: ${exam.subj}`, start, end, `Board: ${exam.board}`);
+    if (exam.time.includes('AM + PM')) { sh = 8; eh = 14; em = 30; }
+    else if (exam.time === 'PM') { sh = 12; eh = 14; em = 30; }
+    return gcalLink(
+      `Exam: ${exam.subj}`,
+      icsDatetime(2026, day.m, day.d, sh, sm),
+      icsDatetime(2026, day.m, day.d, eh, em),
+      `Board: ${exam.board}`,
+    );
   }
 
   function tutorGcal(t: TutorSession): string {
-    const parsed = parseHourMin(t.uk);
-    if (!parsed) return '#';
-    const { sh, sm, eh, em } = parsed;
-    const start = icsDatetime(2026, day.m, day.d, sh, sm);
-    const end = icsDatetime(2026, day.m, day.d, eh, em);
-    return gcalLink(`Tutor: ${t.subj}${t.moved ? ' (Reshuffled)' : ''}`, start, end,
-      `Teacher: ${t.teacher}\nUK: ${t.uk} / NG: ${t.ng}${t.moved ? '\n' + t.reason : ''}`);
+    const p = parseHourMin(t.uk);
+    if (!p) return '#';
+    return gcalLink(
+      `Tutor: ${t.subj}${t.moved ? ' (Reshuffled)' : ''}`,
+      icsDatetime(2026, day.m, day.d, p.sh, p.sm),
+      icsDatetime(2026, day.m, day.d, p.eh, p.em),
+      `Teacher: ${t.teacher}\nUK: ${t.uk} / NG: ${t.ng}${t.moved ? '\n' + t.reason : ''}`,
+    );
   }
 
   return (
@@ -109,7 +153,7 @@ export default function DayModal({ day, onSave, onClose }: Props) {
                 {day.nm}, {day.d} {MF[day.m]} 2026
               </h2>
               <p className="text-xs text-gray-400 mt-0.5">
-                {edited.exam ? `Exam day · ${edited.exam.board}` : 'Edit any field below'}
+                Edit any field then click <strong className="text-gray-600">Update</strong> to save it
               </p>
             </div>
             <button
@@ -124,7 +168,7 @@ export default function DayModal({ day, onSave, onClose }: Props) {
         {/* Body */}
         <div className="flex-1 px-5 py-5 space-y-6">
 
-          {/* ── EXAM ─────────────────────────────────── */}
+          {/* ── EXAM ──────────────────────────────────── */}
           <section>
             <div className="flex items-center justify-between mb-2">
               <span className="section-label">Exam</span>
@@ -157,24 +201,20 @@ export default function DayModal({ day, onSave, onClose }: Props) {
                     </select>
                   </Label>
                 </div>
-                <a
-                  href={examGcal(edited.exam)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-[10px] text-exam-muted hover:underline mt-1"
-                >
-                  <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
-                    <path d="M3 1.5A1.5 1.5 0 0 1 4.5 0h7A1.5 1.5 0 0 1 13 1.5v1H3v-1ZM1 4h14v9.5A1.5 1.5 0 0 1 13.5 15h-11A1.5 1.5 0 0 1 1 13.5V4Zm4 3a.5.5 0 0 0 0 1h6a.5.5 0 0 0 0-1H5Zm0 2.5a.5.5 0 0 0 0 1h6a.5.5 0 0 0 0-1H5Z" />
-                  </svg>
-                  Add this exam to Google Calendar
-                </a>
+                <div className="flex items-center justify-between pt-1">
+                  <a href={examGcal(edited.exam)} target="_blank" rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-[10px] text-exam-muted hover:underline">
+                    <CalIcon />Add to Google Calendar
+                  </a>
+                  <UpdateBtn onClick={() => update('exam')} saved={savedKeys.has('exam')} />
+                </div>
               </div>
             ) : (
               <p className="text-xs text-gray-400 italic">No exam scheduled</p>
             )}
           </section>
 
-          {/* ── TUTOR SESSIONS ────────────────────────── */}
+          {/* ── TUTOR SESSIONS ──────────────────────────── */}
           <section>
             <div className="flex items-center justify-between mb-2">
               <span className="section-label">Tutor Sessions</span>
@@ -185,74 +225,73 @@ export default function DayModal({ day, onSave, onClose }: Props) {
               <p className="text-xs text-gray-400 italic">No tutor sessions</p>
             )}
             <div className="space-y-3">
-              {edited.tutor.map((t, i) => (
-                <div key={i} className={`rounded-lg border p-3 space-y-2.5 ${t.moved ? 'bg-moved-bg border-moved-border' : 'bg-kept-bg border-kept-border'}`}>
-                  <div className="flex items-center justify-between">
-                    <span className={`text-[10px] font-bold uppercase tracking-wider ${t.moved ? 'text-moved-muted' : 'text-kept-muted'}`}>
-                      {t.moved ? '▶ Reshuffled' : '✓ Regular'}
-                    </span>
-                    <button onClick={() => delTutor(i)} className="text-[10px] text-red-400 hover:text-red-600 font-medium">
-                      Remove
-                    </button>
+              {edited.tutor.map((t, i) => {
+                const key = `tutor-${i}`;
+                return (
+                  <div key={i} className={`rounded-lg border p-3 space-y-2.5 ${t.moved ? 'bg-moved-bg border-moved-border' : 'bg-kept-bg border-kept-border'}`}>
+                    <div className="flex items-center justify-between">
+                      <span className={`text-[10px] font-bold uppercase tracking-wider ${t.moved ? 'text-moved-muted' : 'text-kept-muted'}`}>
+                        {t.moved ? '▶ Reshuffled' : '✓ Regular'}
+                      </span>
+                      <button onClick={() => delTutor(i)} className="text-[10px] text-red-400 hover:text-red-600 font-medium">
+                        Remove
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <Label text="Subject">
+                        <input className="input-field" value={t.subj}
+                          onChange={(e) => updTutor(i, 'subj', e.target.value)}
+                          placeholder="e.g. Maths" />
+                      </Label>
+                      <Label text="Teacher">
+                        <input className="input-field" value={t.teacher}
+                          onChange={(e) => updTutor(i, 'teacher', e.target.value)}
+                          placeholder="Teacher name" />
+                      </Label>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Label text="UK time">
+                        <input className="input-field" value={t.uk}
+                          onChange={(e) => updTutor(i, 'uk', e.target.value)}
+                          placeholder="7:00–8:00pm" />
+                      </Label>
+                      <Label text="Nigeria time">
+                        <input className="input-field" value={t.ng}
+                          onChange={(e) => updTutor(i, 'ng', e.target.value)}
+                          placeholder="8:00–9:00pm" />
+                      </Label>
+                    </div>
+
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" checked={t.moved}
+                        onChange={(e) => updTutor(i, 'moved', e.target.checked)}
+                        className="rounded border-gray-300" />
+                      <span className="text-xs text-gray-600">Reshuffled / moved</span>
+                    </label>
+
+                    {t.moved && (
+                      <Label text="Reason">
+                        <input className="input-field" value={t.reason}
+                          onChange={(e) => updTutor(i, 'reason', e.target.value)}
+                          placeholder="Why it was moved" />
+                      </Label>
+                    )}
+
+                    <div className="flex items-center justify-between pt-1">
+                      <a href={tutorGcal(t)} target="_blank" rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-[10px] text-gray-400 hover:text-gray-600 hover:underline">
+                        <CalIcon />Add to Google Calendar
+                      </a>
+                      <UpdateBtn onClick={() => update(key)} saved={savedKeys.has(key)} />
+                    </div>
                   </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <Label text="Subject">
-                      <input className="input-field" value={t.subj}
-                        onChange={(e) => updTutor(i, 'subj', e.target.value)}
-                        placeholder="e.g. Maths" />
-                    </Label>
-                    <Label text="Teacher">
-                      <input className="input-field" value={t.teacher}
-                        onChange={(e) => updTutor(i, 'teacher', e.target.value)}
-                        placeholder="Teacher name" />
-                    </Label>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <Label text="UK time">
-                      <input className="input-field" value={t.uk}
-                        onChange={(e) => updTutor(i, 'uk', e.target.value)}
-                        placeholder="7:00–8:00pm" />
-                    </Label>
-                    <Label text="Nigeria time">
-                      <input className="input-field" value={t.ng}
-                        onChange={(e) => updTutor(i, 'ng', e.target.value)}
-                        placeholder="8:00–9:00pm" />
-                    </Label>
-                  </div>
-
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" checked={t.moved}
-                      onChange={(e) => updTutor(i, 'moved', e.target.checked)}
-                      className="rounded border-gray-300 text-moved" />
-                    <span className="text-xs text-gray-600">Reshuffled / moved</span>
-                  </label>
-
-                  {t.moved && (
-                    <Label text="Reason">
-                      <input className="input-field" value={t.reason}
-                        onChange={(e) => updTutor(i, 'reason', e.target.value)}
-                        placeholder="Why it was moved" />
-                    </Label>
-                  )}
-
-                  <a
-                    href={tutorGcal(t)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-[10px] text-gray-400 hover:text-gray-600 hover:underline"
-                  >
-                    <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
-                      <path d="M3 1.5A1.5 1.5 0 0 1 4.5 0h7A1.5 1.5 0 0 1 13 1.5v1H3v-1ZM1 4h14v9.5A1.5 1.5 0 0 1 13.5 15h-11A1.5 1.5 0 0 1 1 13.5V4Zm4 3a.5.5 0 0 0 0 1h6a.5.5 0 0 0 0-1H5Zm0 2.5a.5.5 0 0 0 0 1h6a.5.5 0 0 0 0-1H5Z" />
-                    </svg>
-                    Add to Google Calendar
-                  </a>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </section>
 
-          {/* ── SCHOOL SESSIONS ───────────────────────── */}
+          {/* ── SCHOOL SESSIONS ─────────────────────────── */}
           <section>
             <div className="flex items-center justify-between mb-2">
               <span className="section-label">School Drop-ins</span>
@@ -263,35 +302,45 @@ export default function DayModal({ day, onSave, onClose }: Props) {
               <p className="text-xs text-gray-400 italic">No school sessions</p>
             )}
             <div className="space-y-2">
-              {edited.sch.map((s, i) => (
-                <div key={i} className="bg-school-bg border border-school-border rounded-lg p-3 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-school-muted">Session {i + 1}</span>
-                    <button onClick={() => delSch(i)} className="text-[10px] text-red-400 hover:text-red-600 font-medium">Remove</button>
-                  </div>
-                  <Label text="Subject">
-                    <input className="input-field" value={s.subj}
-                      onChange={(e) => updSch(i, 'subj', e.target.value)}
-                      placeholder="e.g. Biology" />
-                  </Label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <Label text="Teacher">
-                      <input className="input-field" value={s.teacher}
-                        onChange={(e) => updSch(i, 'teacher', e.target.value)}
-                        placeholder="Teacher name" />
+              {edited.sch.map((s, i) => {
+                const key = `sch-${i}`;
+                return (
+                  <div key={i} className="bg-school-bg border border-school-border rounded-lg p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-school-muted">
+                        Session {i + 1}
+                      </span>
+                      <button onClick={() => delSch(i)} className="text-[10px] text-red-400 hover:text-red-600 font-medium">
+                        Remove
+                      </button>
+                    </div>
+                    <Label text="Subject">
+                      <input className="input-field" value={s.subj}
+                        onChange={(e) => updSch(i, 'subj', e.target.value)}
+                        placeholder="e.g. Biology" />
                     </Label>
-                    <Label text="Time (24h)">
-                      <input className="input-field" value={s.time}
-                        onChange={(e) => updSch(i, 'time', e.target.value)}
-                        placeholder="14:10–15:10" />
-                    </Label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Label text="Teacher">
+                        <input className="input-field" value={s.teacher}
+                          onChange={(e) => updSch(i, 'teacher', e.target.value)}
+                          placeholder="Teacher name" />
+                      </Label>
+                      <Label text="Time (24h)">
+                        <input className="input-field" value={s.time}
+                          onChange={(e) => updSch(i, 'time', e.target.value)}
+                          placeholder="14:10–15:10" />
+                      </Label>
+                    </div>
+                    <div className="flex justify-end pt-1">
+                      <UpdateBtn onClick={() => update(key)} saved={savedKeys.has(key)} />
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </section>
 
-          {/* ── NOTES ─────────────────────────────────── */}
+          {/* ── NOTES ───────────────────────────────────── */}
           <section>
             <div className="section-label">Notes</div>
             <textarea
@@ -301,13 +350,15 @@ export default function DayModal({ day, onSave, onClose }: Props) {
               onChange={(e) => setEdited((p) => ({ ...p, notes: e.target.value }))}
               placeholder="Add notes, reminders, prep tips…"
             />
+            <div className="flex justify-end mt-2">
+              <UpdateBtn onClick={() => update('notes')} saved={savedKeys.has('notes')} />
+            </div>
           </section>
         </div>
 
-        {/* Footer */}
-        <div className="sticky bottom-0 bg-white border-t border-gray-100 px-5 py-3 flex justify-end gap-2 no-print">
-          <button onClick={onClose} className="btn-ghost">Cancel</button>
-          <button onClick={() => onSave(edited)} className="btn-primary text-xs">Save changes</button>
+        {/* Footer — just Done */}
+        <div className="sticky bottom-0 bg-white border-t border-gray-100 px-5 py-3 flex justify-end no-print">
+          <button onClick={onClose} className="btn-ghost">Done</button>
         </div>
       </div>
     </div>
@@ -320,5 +371,13 @@ function Label({ text, children }: { text: string; children: React.ReactNode }) 
       <p className="text-[10px] text-gray-400 mb-1">{text}</p>
       {children}
     </div>
+  );
+}
+
+function CalIcon() {
+  return (
+    <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
+      <path d="M3 1.5A1.5 1.5 0 0 1 4.5 0h7A1.5 1.5 0 0 1 13 1.5v1H3v-1ZM1 4h14v9.5A1.5 1.5 0 0 1 13.5 15h-11A1.5 1.5 0 0 1 1 13.5V4Zm4 3a.5.5 0 0 0 0 1h6a.5.5 0 0 0 0-1H5Zm0 2.5a.5.5 0 0 0 0 1h6a.5.5 0 0 0 0-1H5Z" />
+    </svg>
   );
 }
