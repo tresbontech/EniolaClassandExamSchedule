@@ -4,6 +4,7 @@ import { Day, Week } from '@/lib/types';
 import { initialWeeks } from '@/lib/data';
 import { generateICS } from '@/lib/ics';
 import { supabase, SCHEDULE_ID } from '@/lib/supabase';
+import { ukOffset, ukTimezoneLabel, NIGERIA_LABEL, getViewerTZ, shortTZName } from '@/lib/timezone';
 import DayCard from '@/components/DayCard';
 import DayModal from '@/components/DayModal';
 
@@ -21,6 +22,59 @@ function LegendDot({ color, label }: { color: string; label: string }) {
       <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: color }} />
       {label}
     </span>
+  );
+}
+
+// Exam season: 8 May – 15 Jun 2026 (all BST, but computed properly)
+const EXAM_START = { year: 2026, month: 5, day: 8 };
+
+function TimezoneBar() {
+  const [viewer, setViewer] = useState<ReturnType<typeof getViewerTZ> | null>(null);
+
+  useEffect(() => {
+    setViewer(getViewerTZ());
+  }, []);
+
+  const ukLabel = ukTimezoneLabel(EXAM_START.year, EXAM_START.month, EXAM_START.day);
+  const ukOff   = ukOffset(EXAM_START.year, EXAM_START.month, EXAM_START.day);
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 pb-2.5 text-[10px] text-gray-400">
+      <span className="font-semibold text-gray-500 uppercase tracking-wider">Timezones:</span>
+
+      {/* UK */}
+      <span className="flex items-center gap-1">
+        🇬🇧
+        <span className="font-medium text-gray-600">UK — {ukLabel}</span>
+        <span className="text-gray-400">(UTC+{ukOff})</span>
+        {ukLabel === 'BST' && (
+          <span className="bg-amber-100 text-amber-700 text-[9px] font-semibold px-1 py-0.5 rounded">
+            DST active
+          </span>
+        )}
+      </span>
+
+      <span className="text-gray-300">·</span>
+
+      {/* Nigeria */}
+      <span className="flex items-center gap-1">
+        🇳🇬
+        <span className="font-medium text-gray-600">Nigeria — {NIGERIA_LABEL}</span>
+        <span className="text-gray-400">(UTC+1 · no DST)</span>
+      </span>
+
+      {/* Viewer timezone — only shown if different from UK/NG */}
+      {viewer && viewer.timezone !== 'Europe/London' && viewer.timezone !== 'Africa/Lagos' && (
+        <>
+          <span className="text-gray-300">·</span>
+          <span className="flex items-center gap-1">
+            🌍
+            <span className="font-medium text-gray-600">You — {shortTZName(viewer.timezone)}</span>
+            <span className="text-gray-400">({viewer.label})</span>
+          </span>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -165,12 +219,15 @@ export default function HomePage() {
           </div>
 
           {/* Legend */}
-          <div className="flex flex-wrap gap-4 pb-2.5">
+          <div className="flex flex-wrap gap-4 pb-1.5">
             <LegendDot color="#378ADD" label="Exam day" />
             <LegendDot color="#63B96A" label="Tutor — regular" />
             <LegendDot color="#EF9F27" label="Tutor — reshuffled" />
             <LegendDot color="#7F77DD" label="School drop-in" />
           </div>
+
+          {/* Timezone bar */}
+          <TimezoneBar />
         </div>
       </header>
 

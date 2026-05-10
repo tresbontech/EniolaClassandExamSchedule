@@ -8,6 +8,7 @@ import {
   SCHOOL_MAP, SCHOOL_SUBJECTS, SCHOOL_TIMES,
   subjectColor,
 } from '@/lib/constants';
+import { ukTimezoneLabel, NIGERIA_LABEL } from '@/lib/timezone';
 
 const MF = ['', 'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
@@ -271,13 +272,13 @@ export default function DayModal({ day, onSave, onClose }: Props) {
 
                     {/* Times */}
                     <div className="grid grid-cols-2 gap-2">
-                      <Label text="🇬🇧 UK time">
+                      <Label text={`🇬🇧 UK time (${ukTimezoneLabel(2026, day.m, day.d)})`}>
                         <select className="input-field" value={t.uk}
                           onChange={(e) => updTutor(i, { uk: e.target.value })}>
                           {slotOptions(UK_TIME_SLOTS, t.uk).map((s) => <option key={s}>{s}</option>)}
                         </select>
                       </Label>
-                      <Label text="🇳🇬 Nigeria time">
+                      <Label text={`🇳🇬 Nigeria time (${NIGERIA_LABEL})`}>
                         <select className="input-field" value={t.ng}
                           onChange={(e) => updTutor(i, { ng: e.target.value })}>
                           {slotOptions(NG_TIME_SLOTS, t.ng).map((s) => <option key={s}>{s}</option>)}
